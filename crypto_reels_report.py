@@ -108,7 +108,7 @@ def analyze_with_gemini(reel):
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+        f"gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
     )
     body = {"contents": [{"parts": [{"text": prompt}]}]}
 
