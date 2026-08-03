@@ -44,8 +44,14 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 APIFY_ACTOR = "apify~instagram-scraper"
 
 
+# ---------------------------------------------------------------------------
+# قدم ۱: گرفتن داده از Apify
+# ---------------------------------------------------------------------------
+
 def fetch_instagram_data():
+    """ریل‌های اکانت‌های ثابت + هشتگ‌ها را از Apify می‌گیرد."""
     url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items"
+
     lookback_days = max(1, LOOKBACK_HOURS // 24)
 
     run_input = {
@@ -56,12 +62,18 @@ def fetch_instagram_data():
         "onlyPostsNewerThan": f"{lookback_days} days",
     }
 
-    resp = requests.post(url, params={"token": APIFY_TOKEN}, json=run_input, timeout=600)
+    resp = requests.post(
+        url,
+        params={"token": APIFY_TOKEN},
+        json=run_input,
+        timeout=600,
+    )
     resp.raise_for_status()
     return resp.json()
 
 
 def filter_and_rank(items):
+    """فقط ریل‌ها را نگه می‌دارد، بر اساس بازدید مرتب می‌کند و N تای برتر را برمی‌گرداند."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
     reels = []
 
@@ -90,7 +102,11 @@ def filter_and_rank(items):
     return reels[:MAX_RESULTS_IN_REPORT]
 
 
-def analyze_with_gemini(reel):
+# ---------------------------------------------------------------------------
+# قدم ۲: تحلیل هر ریل با Gemini (رایگان)
+# ---------------------------------------------------------------------------
+
+def analyze_with_gemini(reel, max_retries=4):
     prompt = f"""
 این کپشن یک ریل اینستاگرامی پربازدید در حوزه ارز دیجیتال/ترید است:
 
@@ -112,18 +128,31 @@ def analyze_with_gemini(reel):
     )
     body = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    resp = requests.post(url, json=body, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
+    for attempt in range(max_retries):
+        resp = requests.post(url, json=body, timeout=60)
 
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        if resp.status_code in (503, 429) and attempt < max_retries - 1:
+            wait = 10 * (attempt + 1)
+            print(f"سرور Gemini موقتاً در دسترس نیست ({resp.status_code}). تلاش دوباره پس از {wait} ثانیه...")
+            time.sleep(wait)
+            continue
 
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"hook": "—", "why_viral": "—", "idea": text[:200]}
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
 
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {"hook": "—", "why_viral": "—", "idea": text[:200]}
+
+    return {"hook": "—", "why_viral": "—", "idea": "سرور Gemini موقتاً در دسترس نبود."}
+
+
+# ---------------------------------------------------------------------------
+# قدم ۳: ساخت متن گزارش و ارسال به تلگرام
+# ---------------------------------------------------------------------------
 
 def build_report(ranked_reels_with_analysis):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -161,6 +190,10 @@ def send_to_telegram(text):
         resp.raise_for_status()
         time.sleep(1)
 
+
+# ---------------------------------------------------------------------------
+# اجرای اصلی
+# ---------------------------------------------------------------------------
 
 def main():
     print("در حال گرفتن داده از اینستاگرام...")
