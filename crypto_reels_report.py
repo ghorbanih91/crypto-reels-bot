@@ -22,21 +22,14 @@ from datetime import datetime, timedelta, timezone
 # تنظیمات قابل ویرایش
 # ---------------------------------------------------------------------------
 
-# اکانت‌های ثابتی که هر روز رصد می‌شوند (بدون @)
 SEED_ACCOUNTS = [
-    "fasttraderofficial",   # محمدهادی بنابی
-    "kahangi_arash1",       # آرش کهنگی
-    # اکانت‌های بیشتری که خودت شناسایی/تایید کردی اینجا اضافه کن:
-    # "your_verified_account",
+    "fasttraderofficial",
+    "kahangi_arash1",
 ]
 
-# هشتگ‌هایی که برای کشف ریل‌های جدید جستجو می‌شوند
 HASHTAGS = ["ترید", "کریپتو", "ارزدیجیتال", "تحلیل_تکنیکال", "بیتکوین"]
 
-# حداکثر تعداد ریل نهایی که در گزارش می‌آید (برای ماندن در سقف رایگان Apify)
 MAX_RESULTS_IN_REPORT = 8
-
-# فقط ریل‌های این‌قدر روز اخیر در نظر گرفته شوند
 LOOKBACK_HOURS = 48
 
 # ---------------------------------------------------------------------------
@@ -48,39 +41,27 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-APIFY_ACTOR = "apify~instagram-scraper"  # actor عمومی Apify - در صورت نیاز عوض کن
+APIFY_ACTOR = "apify~instagram-scraper"
 
-
-# ---------------------------------------------------------------------------
-# قدم ۱: گرفتن داده از Apify
-# ---------------------------------------------------------------------------
 
 def fetch_instagram_data():
-    """ریل‌های اکانت‌های ثابت + هشتگ‌ها را از Apify می‌گیرد."""
     url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items"
-
     lookback_days = max(1, LOOKBACK_HOURS // 24)
 
     run_input = {
         "directUrls": [f"https://www.instagram.com/{u}/" for u in SEED_ACCOUNTS]
         + [f"https://www.instagram.com/explore/tags/{h}/" for h in HASHTAGS],
-        "resultsType": "reels",      # فقط ریل - نه پست عکس
-        "resultsLimit": 15,          # به ازای هر منبع - برای کنترل هزینه پایین نگه‌داشته شده
+        "resultsType": "reels",
+        "resultsLimit": 15,
         "onlyPostsNewerThan": f"{lookback_days} days",
     }
 
-    resp = requests.post(
-        url,
-        params={"token": APIFY_TOKEN},
-        json=run_input,
-        timeout=600,
-    )
+    resp = requests.post(url, params={"token": APIFY_TOKEN}, json=run_input, timeout=600)
     resp.raise_for_status()
     return resp.json()
 
 
 def filter_and_rank(items):
-    """فقط ریل‌ها را نگه می‌دارد، بر اساس بازدید مرتب می‌کند و N تای برتر را برمی‌گرداند."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
     reels = []
 
@@ -109,10 +90,6 @@ def filter_and_rank(items):
     return reels[:MAX_RESULTS_IN_REPORT]
 
 
-# ---------------------------------------------------------------------------
-# قدم ۲: تحلیل هر ریل با Gemini (رایگان)
-# ---------------------------------------------------------------------------
-
 def analyze_with_gemini(reel):
     prompt = f"""
 این کپشن یک ریل اینستاگرامی پربازدید در حوزه ارز دیجیتال/ترید است:
@@ -131,7 +108,7 @@ def analyze_with_gemini(reel):
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     )
     body = {"contents": [{"parts": [{"text": prompt}]}]}
 
@@ -147,10 +124,6 @@ def analyze_with_gemini(reel):
     except json.JSONDecodeError:
         return {"hook": "—", "why_viral": "—", "idea": text[:200]}
 
-
-# ---------------------------------------------------------------------------
-# قدم ۳: ساخت متن گزارش و ارسال به تلگرام
-# ---------------------------------------------------------------------------
 
 def build_report(ranked_reels_with_analysis):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -173,7 +146,6 @@ def build_report(ranked_reels_with_analysis):
 
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    # تلگرام هر پیام را حداکثر ۴۰۹۶ کاراکتر قبول می‌کند - در صورت نیاز تکه‌تکه می‌کنیم
     chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
     for chunk in chunks:
         resp = requests.post(
@@ -190,10 +162,6 @@ def send_to_telegram(text):
         time.sleep(1)
 
 
-# ---------------------------------------------------------------------------
-# اجرای اصلی
-# ---------------------------------------------------------------------------
-
 def main():
     print("در حال گرفتن داده از اینستاگرام...")
     raw_items = fetch_instagram_data()
@@ -208,7 +176,7 @@ def main():
     print(f"{len(top_reels)} ریل برتر انتخاب شد. در حال تحلیل با Gemini...")
     for reel in top_reels:
         reel["analysis"] = analyze_with_gemini(reel)
-        time.sleep(2)  # فاصله بین درخواست‌ها برای رعایت سقف رایگان Gemini
+        time.sleep(2)
 
     report_text = build_report(top_reels)
 
