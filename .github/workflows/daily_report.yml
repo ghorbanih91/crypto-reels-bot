@@ -2,9 +2,11 @@ name: Daily Crypto Reels Report
 
 on:
   schedule:
-    # هر روز ساعت ۰۸:۰۰ به وقت ایران (۰۴:۳۰ UTC)
     - cron: "30 4 * * *"
-  workflow_dispatch: {}   # امکان اجرای دستی از تب Actions در گیت‌هاب
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
   run-report:
@@ -27,4 +29,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
         run: python crypto_reels_report.py
+
+      - name: Commit and push generated report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "Update daily report $(date +'%Y-%m-%d')"
+          git push
