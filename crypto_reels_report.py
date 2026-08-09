@@ -1,6 +1,6 @@
 """
 گزارش روزانه ریل‌های برتر کریپتو/ترید فارسی در اینستاگرام
-اجزا: Apify (داده اینستاگرام) + Google Gemini (تحلیل رایگان) + Telegram (ارسال)
+اجزا: Apify (داده اینستاگرام) + Google Gemini (تحلیل رایگان) + صفحه وب (GitHub Pages) + Telegram (اعلان)
 
 نحوه اجرا:
     python crypto_reels_report.py
@@ -10,6 +10,7 @@
     GEMINI_API_KEY
     TELEGRAM_BOT_TOKEN
     TELEGRAM_CHAT_ID
+    REPORT_URL   (اختیاری - آدرس صفحه گیت‌هاب پیجز، برای لینک در پیام تلگرام)
 """
 
 import os
@@ -23,14 +24,15 @@ from datetime import datetime, timedelta, timezone
 # ---------------------------------------------------------------------------
 
 SEED_ACCOUNTS = [
-    "fasttraderofficial",
-    "kahangi_arash1",
+    "fasttraderofficial",   # محمدهادی بنابی
+    "kahangi_arash1",       # آرش کهنگی
+    # "your_verified_account",
 ]
 
 HASHTAGS = ["ترید", "کریپتو", "ارزدیجیتال", "تحلیل_تکنیکال", "بیتکوین"]
 
-MAX_RESULTS_IN_REPORT = 8
-LOOKBACK_HOURS = 48
+MAX_RESULTS_IN_REPORT = 12
+LOOKBACK_HOURS = 96
 
 # ---------------------------------------------------------------------------
 # متغیرهای محیطی
@@ -40,40 +42,29 @@ APIFY_TOKEN = os.environ["APIFY_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+REPORT_URL = os.environ.get("REPORT_URL", "")
 
 APIFY_ACTOR = "apify~instagram-scraper"
 
 
-# ---------------------------------------------------------------------------
-# قدم ۱: گرفتن داده از Apify
-# ---------------------------------------------------------------------------
-
 def fetch_instagram_data():
-    """ریل‌های اکانت‌های ثابت + هشتگ‌ها را از Apify می‌گیرد."""
     url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items"
-
     lookback_days = max(1, LOOKBACK_HOURS // 24)
 
     run_input = {
         "directUrls": [f"https://www.instagram.com/{u}/" for u in SEED_ACCOUNTS]
         + [f"https://www.instagram.com/explore/tags/{h}/" for h in HASHTAGS],
         "resultsType": "reels",
-        "resultsLimit": 15,
+        "resultsLimit": 20,
         "onlyPostsNewerThan": f"{lookback_days} days",
     }
 
-    resp = requests.post(
-        url,
-        params={"token": APIFY_TOKEN},
-        json=run_input,
-        timeout=600,
-    )
+    resp = requests.post(url, params={"token": APIFY_TOKEN}, json=run_input, timeout=600)
     resp.raise_for_status()
     return resp.json()
 
 
 def filter_and_rank(items):
-    """فقط ریل‌ها را نگه می‌دارد، بر اساس بازدید مرتب می‌کند و N تای برتر را برمی‌گرداند."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
     reels = []
 
@@ -101,10 +92,6 @@ def filter_and_rank(items):
     reels.sort(key=lambda r: r["views"], reverse=True)
     return reels[:MAX_RESULTS_IN_REPORT]
 
-
-# ---------------------------------------------------------------------------
-# قدم ۲: تحلیل هر ریل با Gemini (رایگان)
-# ---------------------------------------------------------------------------
 
 def analyze_with_gemini(reel, max_retries=4):
     prompt = f"""
@@ -150,27 +137,92 @@ def analyze_with_gemini(reel, max_retries=4):
     return {"hook": "—", "why_viral": "—", "idea": "سرور Gemini موقتاً در دسترس نبود."}
 
 
-# ---------------------------------------------------------------------------
-# قدم ۳: ساخت متن گزارش و ارسال به تلگرام
-# ---------------------------------------------------------------------------
+def build_html_report(ranked_reels_with_analysis, total_scanned):
+    today_fa = datetime.now().strftime("%Y-%m-%d")
 
-def build_report(ranked_reels_with_analysis):
-    today = datetime.now().strftime("%Y-%m-%d")
-    lines = [f"📊 *گزارش روزانه ریل‌های برتر کریپتو* — {today}\n"]
-
-    medals = ["🥇", "🥈", "🥉"] + ["🔹"] * 10
+    rows = ""
     for i, reel in enumerate(ranked_reels_with_analysis):
         a = reel["analysis"]
-        lines.append(
-            f"{medals[i]} *@{reel['account']}*\n"
-            f"👁 {reel['views']:,} | ❤️ {reel['likes']:,} | 💬 {reel['comments']:,}\n"
-            f"🎣 هوک: {a['hook']}\n"
-            f"💡 چرا وایرال شد: {a['why_viral']}\n"
-            f"✨ ایده پیشنهادی: {a['idea']}\n"
-            f"🔗 {reel['url']}\n"
-        )
+        rank = i + 1
+        rows += f"""
+        <div class="card">
+          <div class="rank">#{rank}</div>
+          <div class="card-body">
+            <div class="account">@{reel['account']}</div>
+            <div class="stats">
+              <span>👁 {reel['views']:,}</span>
+              <span>❤️ {reel['likes']:,}</span>
+              <span>💬 {reel['comments']:,}</span>
+            </div>
+            <div class="row"><b>🎣 هوک:</b> {a['hook']}</div>
+            <div class="row"><b>💡 چرا وایرال شد:</b> {a['why_viral']}</div>
+            <div class="row"><b>✨ ایده پیشنهادی:</b> {a['idea']}</div>
+            <a class="link" href="{reel['url']}" target="_blank">مشاهده ریل اصلی ↗</a>
+          </div>
+        </div>"""
 
-    return "\n".join(lines)
+    html = f"""<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>گزارش روزانه ریل‌های کریپتو - {today_fa}</title>
+<style>
+  body {{
+    font-family: Tahoma, Vazirmatn, sans-serif;
+    background: #0e1621;
+    color: #e8ecf1;
+    margin: 0;
+    padding: 20px;
+  }}
+  .header {{
+    max-width: 720px;
+    margin: 0 auto 24px;
+    text-align: center;
+  }}
+  .header h1 {{ font-size: 22px; color: #64b5f6; margin-bottom: 6px; }}
+  .header p {{ color: #9db1c9; font-size: 13px; }}
+  .card {{
+    max-width: 720px;
+    margin: 0 auto 16px;
+    background: #182533;
+    border-radius: 14px;
+    padding: 16px 18px;
+    display: flex;
+    gap: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }}
+  .rank {{
+    font-size: 20px;
+    font-weight: bold;
+    color: #ffb74d;
+    min-width: 32px;
+  }}
+  .account {{ font-weight: bold; font-size: 16px; color: #fff; margin-bottom: 6px; }}
+  .stats {{ font-size: 12px; color: #9db1c9; margin-bottom: 10px; }}
+  .stats span {{ margin-left: 12px; }}
+  .row {{ font-size: 13.5px; line-height: 1.9; margin-bottom: 4px; }}
+  .link {{ display: inline-block; margin-top: 6px; font-size: 12px; color: #64b5f6; text-decoration: none; }}
+  .footer {{ max-width: 720px; margin: 20px auto; text-align: center; color: #5a6b7d; font-size: 11px; }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 گزارش روزانه ریل‌های برتر کریپتو/ترید</h1>
+    <p>{today_fa} | {total_scanned} پست بررسی شد | {len(ranked_reels_with_analysis)} ریل برتر</p>
+  </div>
+  {rows}
+  <div class="footer">تولید خودکار توسط ربات گزارش‌گیری روزانه</div>
+</body>
+</html>"""
+
+    return html
+
+
+def save_html_report(html):
+    os.makedirs("docs", exist_ok=True)
+    with open("docs/index.html", "w", encoding="utf-8") as f:
+        f.write(html)
 
 
 def send_to_telegram(text):
@@ -183,17 +235,13 @@ def send_to_telegram(text):
                 "chat_id": TELEGRAM_CHAT_ID,
                 "text": chunk,
                 "parse_mode": "Markdown",
-                "disable_web_page_preview": True,
+                "disable_web_page_preview": False,
             },
             timeout=30,
         )
         resp.raise_for_status()
         time.sleep(1)
 
-
-# ---------------------------------------------------------------------------
-# اجرای اصلی
-# ---------------------------------------------------------------------------
 
 def main():
     print("در حال گرفتن داده از اینستاگرام...")
@@ -211,11 +259,21 @@ def main():
         reel["analysis"] = analyze_with_gemini(reel)
         time.sleep(2)
 
-    report_text = build_report(top_reels)
+    print("در حال ساخت صفحه وب گزارش...")
+    html = build_html_report(top_reels, len(raw_items))
+    save_html_report(html)
 
-    print("در حال ارسال به تلگرام...")
-    send_to_telegram(report_text)
-    print("گزارش با موفقیت ارسال شد.")
+    best = top_reels[0]
+    link_line = f"\n\n📄 گزارش کامل: {REPORT_URL}" if REPORT_URL else ""
+    alert_text = (
+        f"📊 *گزارش روزانه آماده شد*\n"
+        f"🥇 برترین ریل امروز: @{best['account']} با {best['views']:,} بازدید"
+        f"{link_line}"
+    )
+
+    print("در حال ارسال اعلان به تلگرام...")
+    send_to_telegram(alert_text)
+    print("گزارش با موفقیت ساخته و اعلان ارسال شد.")
 
 
 if __name__ == "__main__":
